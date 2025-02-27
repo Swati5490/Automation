@@ -1,0 +1,32 @@
+import json
+
+def lambda_handler(event, context):
+    # TODO implement
+    return {
+        'statusCode': 200,
+        'body': json.dumps('Snapshot deletion!')
+    }
+import boto3
+from datetime import datetime
+
+def lambda_handler(event, context):
+    # Initialize the EC2 client
+    ec2 = boto3.client('ec2')
+
+    # Get today's date in the format 'yyyy-mm-dd'
+    today_date = datetime.now().strftime('%Y-%m-%d')
+
+    # Get a list of snapshots with tags matching today's date
+    snapshots = ec2.describe_snapshots(OwnerIds=['self'])['Snapshots']
+
+    for snapshot in snapshots:
+        for tag in snapshot.get('Tags', []):
+            if tag['Key'] == 'DeleteOn' and tag['Value'] == today_date:
+                snapshot_id = snapshot['SnapshotId']
+                print(f"Deleting snapshot: {snapshot_id}")
+                ec2.delete_snapshot(SnapshotId=snapshot_id)
+
+    return {
+        'statusCode': 200,
+        'body': f'Snapshots with today\'s date ({today_date}) deleted successfully.'
+    }
