@@ -1,0 +1,294 @@
+import boto3
+import re
+from datetime import datetime, timedelta
+ 
+ses_client = boto3.client('ses', region_name='ap-south-1')
+iam_client = boto3.client('iam')
+SENDER_EMAIL = 'cloudsupport@nuvama.com'
+    
+def send_email(html_content,plain_text_content,account_name):
+    subject = 'Snapshots tagging of Account '+ account_name
+    charset = "UTF-8"
+    response = ses_client.send_email(
+        Source=SENDER_EMAIL,
+        Destination={
+            'ToAddresses': ['Swati.Singh@nuvama.com']
+        },
+        Message={
+                'Body': {
+                    'Html': {
+                        'Charset': 'UTF-8',
+                        'Data': html_content,
+                    },
+                    'Text': {
+                        'Charset': 'UTF-8',
+                        'Data': plain_text_content,
+                    },
+                },
+                'Subject': {
+                    'Charset': 'UTF-8',
+                    'Data': subject,
+                },
+            }
+    )
+    return response
+def assume_role(account_id, role_name):
+    sts_client = boto3.client('sts')
+    assumed_role = sts_client.assume_role(
+        RoleArn=f'arn:aws:iam::{account_id}:role/{role_name}',
+        RoleSessionName='LambdaSession'
+    )
+    return assumed_role['Credentials']
+ 
+def fetch_iam_user_data(credentials, account_id, account_name):
+    #print("------credentials------",credentials)
+    ec2_client = boto3.client(
+        'ec2',
+        aws_access_key_id=credentials['AccessKeyId'],
+        aws_secret_access_key=credentials['SecretAccessKey'],
+        aws_session_token=credentials['SessionToken']
+    )
+    snapshots = ec2_client.describe_snapshots(OwnerIds=['self'])
+    str1=""
+    str2=""
+    str3=""
+    
+    for snapshot in snapshots['Snapshots']:
+        snapshot_id = snapshot['SnapshotId']
+        description = snapshot.get('Description', '')
+        tags = snapshot.get('Tags', [])
+        volume_ID = snapshot['VolumeId'] 
+        start_Time = snapshot['StartTime']
+        start_date = start_Time.date()
+        instance_id=[]
+        server_name=[]
+        instance_ip=[]
+        instance_id1=[]
+        snapshottags=[]
+        deleteOn=[]
+        result=""
+        for tag in tags:
+            snapshottags.append(tag['Key'])
+            if tag['Key'] == 'EC2_Private_IP':
+                instance_ip = tag['Value']
+            elif tag['Key'] == 'ServerName':
+                server_name = tag['Value']
+            elif tag['Key'] == 'InstanceID':
+                instance_id1 = tag['Value']
+            elif tag['Key'] == 'DeleteOn' :
+                deleteOn = tag['Value']
+            '''elif tag['Key'] == 'CreationDate':
+                createDate == tag['Value']'''
+        if instance_id1 == []:
+            match = re.search(r'i-[0-9a-f]+', description)
+            instance_id = match.group(0) if match else None
+            
+        str1=str1+f"<tr><td>{account_name}</td><td>{snapshot_id}</td><td>{start_date}</td><td>{volume_ID}</td><td>{instance_id1}</td><td>{server_name}</td><td>{instance_ip}</td><td>{deleteOn}</td><td>{snapshottags}</td></tr>"  
+        result = ' '.join(snapshottags)
+        if instance_id != [] and deleteOn == [] and 'rk_' not in result:
+            try:
+                instanceid = []
+                response = ec2_client.describe_instances(InstanceIds=[instance_id])
+                for reservation in response['Reservations']:
+                    for instance in reservation['Instances']:
+                        instance_id = instance.get('InstanceId', 'N/A')
+                        private_ip = instance.get('PrivateIpAddress', 'N/A')
+                        tags = instance.get('Tags', [])
+                        for tag in tags:
+                            if tag['Key'] == 'Name':
+                                instance_name = tag['Value']
+                        
+                if 'InstanceID' not in snapshottags:
+                    str1=str1+f"<tr><td>{account_name}</td><td>{snapshot_id}</td><td>-</td><td>-</td><td>create ID tag : {instance_id}</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>"  
+                    ec2_client.create_tags(
+                            Resources=[snapshot_id],
+                                Tags=[
+                                    {'Key': 'InstanceID', 'Value': instance_id}
+                                ]
+                        )
+                if 'EC2_Private_IP' not in snapshottags:
+                    str1=str1+f"<tr><td>{account_name}</td><td>{snapshot_id}</td><td>-</td><td>-</td><td>-</td><td>-</td><td>create IP tag : {private_ip}</td><td>-</td><td>-</td></tr>"  
+                    ec2_client.create_tags(
+                            Resources=[snapshot_id],
+                                Tags=[
+                                    {'Key': 'EC2_Private_IP', 'Value': private_ip}
+                                ]
+                        )
+                if 'ServerName' not in snapshottags:
+                    str1=str1+f"<tr><td>{account_name}</td><td>{snapshot_id}</td><td>-</td><td>-</td><td>-</td><td>create ServerName tag : {instance_name}</td><td>-</td><td>-</td><td>-</td></tr>"  
+                    ec2_client.create_tags(
+                            Resources=[snapshot_id],
+                                Tags=[
+                                    {'Key': 'ServerName', 'Value': instance_name}
+                                ]
+                        )
+                '''if 'CreationDate' not in snapshottags:
+                    str1=str1+f"<tr><td>{account_name}</td><td>{snapshot_id}</td><td>create date tag : {start_date}</td><td>-</td><td>-</td><td>create ServerName tag : {instance_name}</td><td>-</td><td>-</td><td>-</td></tr>"  
+                    ec2_client.create_tags(
+                            Resources=[snapshot_id],
+                                Tags=[
+                                    {'Key': 'CreationDate', 'Value': start_date}
+                                ]
+                        )'''
+            except Exception as e:
+                if 'InvalidInstanceID.NotFound' in str(e):
+                    try:
+                        if 'InstanceID' not in snapshottags:
+                            str1=str1+f"<tr><td>{account_name}</td><td>{snapshot_id}</td><td>-</td><td>-</td><td>create ID tag : {instance_id}</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>"
+                            ec2_client.create_tags(
+                                    Resources=[snapshot_id],
+                                        Tags=[
+                                            {'Key': 'InstanceID', 'Value': instance_id}
+                                        ]
+                                )
+                        if 'EC2_Private_IP' not in snapshottags:
+                            str1=str1+f"<tr><td>{account_name}</td><td>{snapshot_id}</td><td>-</td><td>-</td><td>-</td><td>-</td><td>create IP tag : not exist</td><td>-</td><td>-</td></tr>"  
+                            ec2_client.create_tags(
+                                    Resources=[snapshot_id],
+                                        Tags=[
+                                            {'Key': 'EC2_Private_IP', 'Value': 'IP Address not exist'}
+                                        ]
+                                )
+                        if 'ServerName' not in snapshottags:
+                            str1=str1+f"<tr><td>{account_name}</td><td>{snapshot_id}</td><td>-</td><td>-</td><td>-</td><td>create ServerName tag : not exist</td><td>-</td><td>-</td><td>-</td></tr>"  
+                            ec2_client.create_tags(
+                                    Resources=[snapshot_id],
+                                        Tags=[
+                                            {'Key': 'ServerName', 'Value': 'ServerName not exist'}
+                                        ]
+                                )
+                            #print(f"Tag added to snapshot : ServerNotExist=True")
+                        '''if 'CreationDate' not in snapshottags:
+                            str1=str1+f"<tr><td>{account_name}</td><td>{snapshot_id}</td><td>create date tag : {start_date}</td><td>-</td><td>-</td><td>create ServerName tag : {instance_name}</td><td>-</td><td>-</td><td>-</td></tr>"  
+                            ec2_client.create_tags(
+                                    Resources=[snapshot_id],
+                                        Tags=[
+                                            {'Key': 'CreationDate', 'Value': start_date}
+                                        ]
+                                )'''
+                    except Exception as tag_error:
+                        print(f"Failed to tag snapshot : {str(tag_error)}")
+                else:
+                    print(f"Unexpected error occurred: {str(e)} --- {snapshot_id}")
+        elif instance_id == [] and deleteOn == [] :
+            if 'InstanceID' not in snapshottags:
+                str1=str1+f"<tr><td>{account_name}</td><td>{snapshot_id}</td><td>-</td><td>-</td><td>create ID tag : not exist</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>"
+                ec2_client.create_tags(
+                    Resources=[snapshot_id],
+                        Tags=[
+                            {'Key': 'InstanceID', 'Value': 'Instance ID not exist'}
+                            ]
+                    )
+            if 'EC2_Private_IP' not in snapshottags:
+                str1=str1+f"<tr><td>{account_name}</td><td>{snapshot_id}</td><td>-</td><td>-</td><td>-</td><td>-</td><td>create IP tag : not exist</td><td>-</td><td>-</td></tr>"  
+                ec2_client.create_tags(
+                        Resources=[snapshot_id],
+                        Tags=[
+                            {'Key': 'EC2_Private_IP', 'Value': 'IP Address not exist'}
+                            ]
+                    )
+            if 'ServerName' not in snapshottags:
+                str1=str1+f"<tr><td>{account_name}</td><td>{snapshot_id}</td><td>-</td><td>-</td><td>-</td><td>create ServerName tag : not exist</td><td>-</td><td>-</td><td>-</td></tr>"  
+                ec2_client.create_tags(
+                        Resources=[snapshot_id],
+                        Tags=[
+                            {'Key': 'ServerName', 'Value': 'ServerName not exist'}
+                            ]
+                    )
+            '''if 'CreationDate' not in snapshottags:
+                    str1=str1+f"<tr><td>{account_name}</td><td>{snapshot_id}</td><td>create date tag : {start_date}</td><td>-</td><td>-</td><td>create ServerName tag : {instance_name}</td><td>-</td><td>-</td><td>-</td></tr>"  
+                    ec2_client.create_tags(
+                            Resources=[snapshot_id],
+                                Tags=[
+                                    {'Key': 'CreationDate', 'Value': start_date}
+                                ]
+                        )'''
+    
+    str3=str3 +str2 +str1
+    
+    result=f"""
+        <html>
+            <body>
+                <h1>Hi, Cloud Team</h1>
+                <table border="1" style="border-collapse: collapse;">{str3}</table>
+            </body>
+        </html>
+    """
+    send_email(result,str3,account_name)
+    return str3
+    
+ 
+def fetchAccountName(account_id):
+    if account_id == '606443521319':
+        return "PWARND"
+    elif account_id == '148160715702':
+        return "PWMRND"
+    elif account_id == '057490504518':
+        return "EGIACorpRND"
+    elif account_id == '732821778924':
+        return "EGIA Trading Platforms"
+    elif account_id == '625750620533':
+        return "PWA"
+    elif account_id == '874698610942':
+        return "PWA Call Center"
+    elif account_id == '211142723734':
+        return "PWM"
+    elif account_id == '790988048460':
+        return "Capital Services"
+    elif account_id == '335374845256':
+        return "Asset Services"
+    elif account_id == '344352937661':
+        return "Investment Management"
+    elif account_id == '371938574238':
+        return "WM Corporate"
+    elif account_id == '787935213539':
+        return "EGIA Corporate"
+    elif account_id == '081363297245':
+        return "FIA"
+    elif account_id == '687841828365':
+        return "Institutional Equities"
+    elif account_id == '943663807706':
+        return "External Asset Management"
+    elif account_id == '562272010475':
+        return "Network Account"
+    elif account_id == '686428535135':
+        return "LogArchive"
+    elif account_id == '523677342687':
+        return "SharedService"
+    elif account_id == '246841685644':
+        return "PCG"
+    elif account_id == '594963042177':
+        return "ManagementAccount"
+    elif account_id == '251531950660':
+        return "AuditAccount"
+    elif account_id == '908027402715':
+        return "Digital Data"
+    
+    
+def lambda_handler(event, context):
+    account_ids = ['371938574238','787935213539','081363297245','687841828365','943663807706','686428535135','562272010475','251531950660','246841685644','606443521319', '523677342687','057490504518','732821778924','625750620533','874698610942','211142723734','790988048460','335374845256','344352937661']
+    role_name = 'LambdaIAMAccessRole'
+    #print("--------------ids---------------")
+    all_user_data = ""
+    user_data=""
+    for account_id in account_ids:
+        credentials = assume_role(account_id, role_name)
+        account_name = fetchAccountName(account_id)
+        print("-------------------------account_name-----------",account_name)
+        user_data = fetch_iam_user_data(credentials,account_id,account_name)
+        #print("----user data--",user_data)
+        all_user_data=all_user_data+user_data
+    #print("=================",all_user_data)
+    result=f"""
+        <html>
+            <body>
+                <h1>Hi, Cloud Team</h1>
+                <table border="1" style="border-collapse: collapse;">{all_user_data}</table>
+            </body>
+        </html>
+    """
+    #send_email(result,all_user_data)
+    return {
+        'statusCode': 200,
+        'body': '-----Success----------'
+    }
