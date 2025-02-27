@@ -1,0 +1,228 @@
+import boto3
+from datetime import datetime, timedelta
+ 
+ses_client = boto3.client('ses', region_name='ap-south-1')
+iam_client = boto3.client('iam')
+SENDER_EMAIL = 'cloudsupport@nuvama.com'
+    
+def send_email(html_content,plain_text_content):
+    subject = 'Volume/Instance Tags'
+    #body_text = str1
+    #print("----------------------",str)
+    charset = "UTF-8"
+    response = ses_client.send_email(
+        Source=SENDER_EMAIL,
+        Destination={
+            'ToAddresses': ['Swati.Singh@nuvama.com']
+        },
+        Message={
+                'Body': {
+                    'Html': {
+                        'Charset': 'UTF-8',
+                        'Data': html_content,
+                    },
+                    'Text': {
+                        'Charset': 'UTF-8',
+                        'Data': plain_text_content,
+                    },
+                },
+                'Subject': {
+                    'Charset': 'UTF-8',
+                    'Data': subject,
+                },
+            }
+    )
+    return response
+def assume_role(account_id, role_name):
+    sts_client = boto3.client('sts')
+    assumed_role = sts_client.assume_role(
+        RoleArn=f'arn:aws:iam::{account_id}:role/{role_name}',
+        RoleSessionName='LambdaSession'
+    )
+    return assumed_role['Credentials']
+ 
+def fetch_iam_user_data(credentials, account_id, account_name):
+    #print("------credentials------",credentials)
+    ec2_client = boto3.client(
+        'ec2',
+        aws_access_key_id=credentials['AccessKeyId'],
+        aws_secret_access_key=credentials['SecretAccessKey'],
+        aws_session_token=credentials['SessionToken']
+    )
+    #print("acc Name ",account_name)
+    
+    # Retrieve all instances
+    response = ec2_client.describe_instances()
+    
+    # Extract the IP addresses
+    private_ip = []
+    instance_id=[]
+    instance_name=[]
+    str1=""
+    str2=""
+    str3=""
+    str4=""
+    #print(str1,"----",str2,"----",str3,"----",str4)
+    try :
+        for reservation in response['Reservations']:
+            try : 
+                for instance in reservation['Instances']:
+                    instance_id = instance.get('InstanceId', 'N/A')
+                    private_ip = instance.get('PrivateIpAddress', 'N/A')
+                    volumes=instance.get('BlockDeviceMappings','N/A')
+                    tags = instance.get('Tags', [])
+                    instancetags=[]
+                    private_ip1=""
+                    
+                    for tag in tags:
+                        instancetags.append(tag['Key'])
+                        if tag['Key'] == 'Name':
+                            instance_name = tag['Value']
+                        if tag['Key'] == 'Private_IP':
+                            private_ip1 = tag['Value']
+                    
+                    str2=str2+f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>-</td><td>{private_ip1}</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>"
+                    
+                    if 'Private_IP' not in instancetags:
+                        str2=str2+f"<tr><td>{account_name}</td><td>{instance_id}</td><td>-</td><td>-</td><td>create IP tag</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>"
+                        ec2_client.create_tags(Resources=[instance_id],
+                            Tags=[
+                               {
+                                  'Key': 'Private_IP',
+                                 'Value': private_ip
+                                }
+                            ]
+                            )
+                    
+                    for volume in volumes:
+                        volume_id = volume['Ebs']['VolumeId']
+                        volume_response = ec2_client.describe_volumes(VolumeIds=[volume_id])
+                        volume_tags = volume_response['Volumes'][0].get('Tags', [])
+                        ip_add=[]
+                        voltags=[]
+                        server_name=[]
+                        delete_on=[]
+                        detach_on=[]
+                        instance_id1=[]
+                        for tag in volume_tags:
+                            voltags.append(tag['Key'])
+                            if tag['Key'] == 'EC2_Private_IP':
+                                ip_add = tag['Value']
+                            if tag['Key'] == 'ServerName':
+                                server_name = tag['Value']
+                            if tag['Key'] == 'DeleteOn':
+                                delete_on = tag['Value']
+                            if tag['Key'] == 'DetachOn':
+                                detach_on = tag['Value']
+                            if tag['Key'] == 'InstanceID':
+                                instance_id1 = tag['Value']
+                        
+                        creation_date = volume_response['Volumes'][0]['CreateTime']
+                        creation_date = creation_date.date()
+                        result = ' '.join(voltags)
+                        
+                        str2=str2+f"<tr><td>{account_name}</td><td>{volume_id}</td><td>{voltags}</td><td>{creation_date}</td><td>{instance_id1}</td><td>{server_name}</td><td>{ip_add}</td><td>{delete_on}</td><td>{detach_on}</td></tr>"
+                        
+                        if 'EC2_Private_IP' not in voltags and delete_on == [] and detach_on == [] and 'rk_' not in result:
+                            str2=str2+f"<tr><td>{account_name}</td><td>{volume_id}</td><td>-</td><td>-</td><td>-</td><td>-</td><td>Create IP Tag </td><td></td><td></td></tr>"
+                            ec2_client.create_tags(
+                                Resources=[volume_id],
+                                Tags=[{'Key': 'EC2_Private_IP', 'Value': private_ip}]
+                            )
+                        if 'ServerName' not in voltags and delete_on == [] and detach_on == [] and 'rk_' not in result:
+                            str2=str2+f"<tr><td>{account_name}</td><td>{volume_id}</td><td>-</td><td>-</td><td>-</td><td>Create ServerName Tag</td><td>-</td><td>-</td><td>-</td></tr>"
+                            ec2_client.create_tags(
+                                Resources=[volume_id],
+                                Tags=[{'Key': 'ServerName', 'Value': instance_name}]
+                            )
+                        if 'InstanceID' not in voltags and delete_on == [] and detach_on == [] and 'rk_' not in result:
+                            str2=str2+f"<tr><td>{account_name}</td><td>{volume_id}</td><td>-</td><td>-</td><td>Create ID Tag</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>"
+                            ec2_client.create_tags(
+                                Resources=[volume_id],
+                                Tags=[{'Key': 'InstanceID','Value':instance_id}]
+                            )
+            except Exception as e:
+                print("except throw--------",e)
+                continue
+        str3 = str3 + str1 + str2
+        #print(instance_id,"------",volume_id,"--------",account_name)
+        str4=str3
+    except Exception as e:
+        print("except throw--------",e)
+    return str4
+    
+ 
+def fetchAccountName(account_id):
+    if account_id == '606443521319':
+        return "PWARND"
+    elif account_id == '148160715702':
+        return "PWMRND"
+    elif account_id == '057490504518':
+        return "EGIACorpRND"
+    elif account_id == '732821778924':
+        return "EGIA Trading Platforms"
+    elif account_id == '625750620533':
+        return "PWA"
+    elif account_id == '874698610942':
+        return "PWA Call Center"
+    elif account_id == '211142723734':
+        return "PWM"
+    elif account_id == '790988048460':
+        return "Capital Services"
+    elif account_id == '335374845256':
+        return "Asset Services"
+    elif account_id == '344352937661':
+        return "Investment Management"
+    elif account_id == '371938574238':
+        return "WM Corporate"
+    elif account_id == '787935213539':
+        return "EGIA Corporate"
+    elif account_id == '081363297245':
+        return "FIA"
+    elif account_id == '687841828365':
+        return "Institutional Equities"
+    elif account_id == '943663807706':
+        return "External Asset Management"
+    elif account_id == '562272010475':
+        return "Network Account"
+    elif account_id == '686428535135':
+        return "LogArchive"
+    elif account_id == '523677342687':
+        return "SharedService"
+    elif account_id == '246841685644':
+        return "PCG"
+    elif account_id == '594963042177':
+        return "ManagementAccount"
+    elif account_id == '251531950660':
+        return "AuditAccount"
+    elif account_id == '908027402715':
+        return "Digital Data"
+    
+    
+def lambda_handler(event, context):
+    account_ids = ['251531950660','246841685644','606443521319', '523677342687','057490504518','732821778924','625750620533','874698610942','211142723734','790988048460','335374845256','344352937661','371938574238','787935213539','081363297245','687841828365','943663807706','686428535135','562272010475']
+    role_name = 'LambdaIAMAccessRole'
+    #print("--------------ids---------------")
+    all_user_data = ""
+    user_data=""
+    for account_id in account_ids:
+        credentials = assume_role(account_id, role_name)
+        account_name = fetchAccountName(account_id)
+        print("-------------------------account_name-----------",account_name)
+        user_data = fetch_iam_user_data(credentials,account_id,account_name)
+        #print("----user data--",user_data)
+        all_user_data=all_user_data+user_data
+    #print("=================",all_user_data)
+    result=f"""
+        <html>
+            <body>
+                <h1>Hi, Cloud Team</h1>
+                <table border="1" style="border-collapse: collapse;">{all_user_data}</table>
+            </body>
+        </html>
+    """
+    send_email(result,all_user_data)
+    return {
+        'statusCode': 200,
+        'body': '-----Success----------'
+    }
