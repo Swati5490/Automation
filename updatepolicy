@@ -1,0 +1,203 @@
+import boto3
+import json
+ 
+ses_client = boto3.client('ses', region_name='ap-south-1')
+iam_client = boto3.client('iam')
+SENDER_EMAIL = 'cloudsupport@nuvama.com'
+def send_email(html_content,plain_text_content):
+    subject = 'S3 Bucket Details for all AWS Account'
+    #body_text = str1
+    #print("----------------------",str)
+    #print(body_text)
+    charset = "UTF-8"
+    response = ses_client.send_email(
+        Source=SENDER_EMAIL,
+        Destination={
+            'ToAddresses': ['Swati.Singh@nuvama.com']
+        },
+        Message={
+                'Body': {
+                    'Html': {
+                        'Charset': 'UTF-8',
+                        'Data': html_content,
+                    },
+                    'Text': {
+                        'Charset': 'UTF-8',
+                        'Data': plain_text_content,
+                    },
+                },
+                'Subject': {
+                    'Charset': 'UTF-8',
+                    'Data': subject,
+                },
+            }
+    )
+    return response
+def assume_role(account_id, role_name):
+    sts_client = boto3.client('sts')
+    assumed_role = sts_client.assume_role(
+        RoleArn=f'arn:aws:iam::{account_id}:role/{role_name}',
+        RoleSessionName='LambdaSession'
+    )
+    #print(assumed_role['Credentials'])
+    return assumed_role['Credentials']
+ 
+def fetch_iam_user_data(account_id, credentials, policy_arn, policy_document,account_name):
+    str1=""
+    str2=""
+    #print("------credentials------",credentials)
+    iam_client = boto3.client(
+        'iam',
+        aws_access_key_id=credentials['AccessKeyId'],
+        aws_secret_access_key=credentials['SecretAccessKey'],
+        aws_session_token=credentials['SessionToken']
+    )
+    try:
+        # List all versions of the policy
+        response = iam_client.list_policy_versions(PolicyArn=policy_arn)
+        versions = response['Versions']
+        print(versions)
+        # Identify non-default versions
+        non_default_versions = [v for v in versions if not v['IsDefaultVersion']]
+        
+        # Delete non-default versions
+        for version in non_default_versions:
+            version_id = version['VersionId']
+            print(f"Deleting version {version_id} of policy {policy_arn}")
+            iam_client.delete_policy_version(
+                PolicyArn=policy_arn,
+                VersionId=version_id
+            )
+    except ClientError as e:
+        print(f"Error deleting old policy versions: {e}")
+       
+    try:
+        iam_client.create_policy_version(
+        PolicyArn=policy_arn,
+        PolicyDocument=json.dumps(policy_document),
+        SetAsDefault=True
+        )
+        print("Policy Has Been Updated ",account_name)
+    except Exception as e:
+            print("Exception Throw : ",e)
+    ##print("str2---",str2)
+    
+    #return str2
+ 
+def fetchAccountName(account_id):
+    if account_id == '606443521319':
+        return "PWARND"
+    elif account_id == '148160715702':
+        return "PWMRND"
+    elif account_id == '057490504518':
+        return "EGIACorpRND"
+    elif account_id == '732821778924':
+        return "EGIA Trading Platforms"
+    elif account_id == '625750620533':
+        return "PWA"
+    elif account_id == '874698610942':
+        return "PWA Call Center"
+    elif account_id == '211142723734':
+        return "PWM"
+    elif account_id == '790988048460':
+        return "Capital Services"
+    elif account_id == '335374845256':
+        return "Asset Services"
+    elif account_id == '344352937661':
+        return "Investment Management"
+    elif account_id == '371938574238':
+        return "WM Corporate"
+    elif account_id == '787935213539':
+        return "EGIA Corporate"
+    elif account_id == '081363297245':
+        return "FIA"
+    elif account_id == '687841828365':
+        return "Institutional Equities"
+    elif account_id == '943663807706':
+        return "External Asset Management"
+    elif account_id == '686428535135':
+        return "LogArchive"
+    elif account_id == '562272010475':
+        return "Network"
+    elif account_id == '594963042177':
+        return "Management"
+    
+def lambda_handler(event, context):
+    account_ids = ['057490504518']#,'057490504518','148160715702','732821778924','625750620533','874698610942','211142723734']#,'790988048460','335374845256','344352937661','371938574238','787935213539','081363297245','687841828365','943663807706','686428535135','562272010475','594963042177']
+    role_name = 'LambdaIAMAccessRole'
+    #print("--------------ids---------------")
+    all_user_data = ""
+    str4=""
+    str5=""
+    #print("--------type ",type(user_data))
+    #role_name = 'PolicyUpdateRole'
+
+    # Policy ARN
+    #policy_arn = 'arn:aws:iam::aws:policy/IAM-Key-Rotation-policy'   #'arn:aws:iam::057490504518:policy/IAM-Key-Rotation-Policy'
+
+    # Updated policy document
+    new_policy_document ={
+    	"Version": "2012-10-17",
+    	"Statement": [
+    		{
+    			"Effect": "Allow",
+    			"Action": [
+    				"iam:ListUsers",
+    				"iam:GetAccessKeyLastUsed",
+    				"iam:GetUser",
+    				"iam:ListAccessKeys",
+    				"iam:UpdateAccessKey",
+    				"iam:CreateAccessKey",
+    				"iam:DeleteAccessKey",
+    				"ses:SendEmail",
+    				"iam:ListUserTags",
+    				"ses:SendRawEmail",
+    				"iam:ListAccountAliases",
+    				"iam:ListUserPolicies",
+    				"iam:ListAttachedUserPolicies",
+    				"iam:GetPolicy",
+    				"iam:GetPolicyVersion",
+    				"iam:ListGroupsForUser",
+    				"iam:ListAttachedGroupPolicies",
+    				"iam:GenerateServiceLastAccessedDetails",
+    				"iam:GetServiceLastAccessedDetails",
+    				"iam:ListGroupPolicies",
+    				"iam:GetGroupPolicy",
+    				"iam:ListRoles",
+    				"iam:ListAttachedRolePolicies",
+    				"iam:ListRolePolicies",
+    				"ec2:DescribeInstances",
+    				"ec2:DescribeVolumes",
+    				"ec2:DescribeTags",
+    				"ec2:CreateTags",
+    				"iam:CreatePolicyVersion",
+    				"iam:ListPolicyVersions",
+				    "iam:DeletePolicyVersion"
+    			],
+    			"Resource": "*"
+    		}
+    	]
+    }
+    for account_id in account_ids:
+        #print("-------------------------account_id-----------",account_id)
+        credentials = assume_role(account_id, role_name)
+        account_name = fetchAccountName(account_id)
+        #fetch_iam_user_data(credentials,account_id,account_name)
+        policy_arn=f'arn:aws:iam::{account_id}:policy/IAM-Key-Rotation-Policy'
+        fetch_iam_user_data(account_id, credentials, policy_arn, new_policy_document, account_name)
+        #str5=str5+str4
+   # print("-------final account_id---",str4)
+    result=f"""
+        <html>
+            <body>
+                <h1>Hi, Cloud Team</h1>
+                <table>{str5}</table>
+            </body>
+        </html>
+    """
+    #send_email(result,all_user_data)
+    #print(str4)
+    return {
+        'statusCode': 200,
+        'body': '-----Success----------'
+    }
