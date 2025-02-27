@@ -1,0 +1,254 @@
+import json
+import boto3
+import time
+from botocore.exceptions import ClientError
+ 
+ses_client = boto3.client('ses', region_name='ap-south-1')
+iam_client = boto3.client('iam')
+SENDER_EMAIL = 'cloudsupport@nuvama.com'
+def send_email(html_content,plain_text_content):
+    subject = 'Policy Associated with IAM User in All AWS Account'
+    #body_text = str1
+    #print("----------------------",str)
+    #print(body_text)A
+    charset = "UTF-8"
+    response = ses_client.send_email(
+        Source=SENDER_EMAIL,
+        Destination={
+            'ToAddresses': ['Swati.Singh@nuvama.com']
+        },
+        Message={
+                'Body': {
+                    'Html': {
+                        'Charset': 'UTF-8',
+                        'Data': html_content,
+                    },
+                    'Text': {
+                        'Charset': 'UTF-8',
+                        'Data': plain_text_content,
+                    },
+                },
+                'Subject': {
+                    'Charset': 'UTF-8',
+                    'Data': subject,
+                },
+            }
+    )
+    return response
+
+def assume_role(account_id, role_name):
+    sts_client = boto3.client('sts')
+    assumed_role = sts_client.assume_role(
+        RoleArn=f'arn:aws:iam::{account_id}:role/{role_name}',
+        RoleSessionName='LambdaSession'
+    )
+    #print(assumed_role['Credentials'])
+    return assumed_role['Credentials']
+    
+def getSubString(actions):
+    str01=""
+    subStr='waf'
+    print(actions)
+    for sublist in actions:
+        #print("sublist-------",sublist)
+        if sublist == '*':
+            return sublist
+        else :
+            str01=""
+            if isinstance(sublist, list):
+                for item in sublist:
+                    if subStr in item :
+                        str01=str01+item+" "
+            else:
+                item=sublist
+                if subStr in item :
+                    str01=str01+item+" "
+    return str01
+    
+def fetch_iam_user_data(credentials,account_id,account_name):
+    iam_client = boto3.client(
+        'iam',
+        aws_access_key_id=credentials['AccessKeyId'],
+        aws_secret_access_key=credentials['SecretAccessKey'],
+        aws_session_token=credentials['SessionToken']
+    )
+    #print("-------account id ------",account_id)
+    users = iam_client.list_users()
+    #print("-----------users",users)
+    user_data = []
+    result1=""
+    result2=""
+    str4=""
+    inline_policy_name =""
+    statement=[]
+    actions=[]
+    username = ""
+    resultfinal=""
+    strfinal=""
+    bufgrp=""
+    for user in users['Users']:
+        try:
+            resultfinalgrp=""
+            inlineStr=""
+            groupStr=""
+            directStr=""
+            bufStr2=""
+            final=""
+            username = user['UserName']
+            #print("----------un---",username)
+            attached_policies1 = iam_client.list_attached_user_policies(UserName=username)
+            attached_groups = iam_client.list_groups_for_user(UserName=username)
+            managed_policy_details = []
+            result=""
+            access_level=""
+            groups = attached_groups['Groups']
+            item=[]
+            for group in groups :
+                resultfinalgrp=""
+                bufgrp=""
+                group_name = group['GroupName']
+                #print("grp--------",group_name)
+                attached_policies = iam_client.list_attached_group_policies(GroupName=group_name)
+                inline_policies = iam_client.list_group_policies(GroupName=group_name)
+                #print("---inline------------",inline_policies)
+                #print("---name---",inline_policies['PolicyNames'])
+                if inline_policies['PolicyNames'] != []:
+                    actions=[]
+                    inline_policy_name = inline_policies['PolicyNames']
+                    policy_names = inline_policies.get('PolicyNames', [])
+        
+                    # Create a dictionary to store the policy details
+                    policies = {}
+                    
+                    # Step 2: Get the content of each inline policy
+                    for policy_name in policy_names:
+                        policy = iam_client.get_group_policy(
+                            GroupName=group_name,
+                            PolicyName=policy_name
+                        )
+                    # Store policy document
+                    policies = policy['PolicyDocument']
+                    for statement in policies.get("Statement", []):
+                        action = statement.get("Action")
+                        actions.append(action)
+                    #("---action  group---",actions)
+                    returnString = getSubString(actions)
+                    if returnString != "" :
+                        inlineStr=f"<tr><td>{account_name}</td><td>{username}</td><td>{group_name}</td><td>{policy_arn}</td><td>{returnString}</td></tr>"
+                        #print("-----inline-----",inlineStr)
+                
+                for policy in attached_policies['AttachedPolicies']:
+                    #print("bufgrp----for ",bufgrp)
+                    actions=[]
+                    groupStr=""
+                    policy_arn = policy['PolicyArn']
+                    #print('policy ARN-111--',policy_arn)
+                    policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
+                    #print("ver----",policy_version)
+                    policy_document = iam_client.get_policy_version(
+                    PolicyArn=policy_arn,
+                    VersionId=policy_version
+                    )['PolicyVersion']['Document']
+                    #print("doc----",policy_document)
+                    for statement in policy_document.get("Statement", []):
+                        #print("bufgrp----for 2 ",bufgrp)
+                        action = statement.get("Action")
+                        actions.append(action)
+                    #print("actions--",actions)
+                    returnString = getSubString(actions)
+                    if returnString != "" :
+                        #print("bufgrp----if ",bufgrp)
+                        #print("return String ---",returnString)
+                        groupStr = f"<tr><td>{account_name}</td><td>{username}</td><td>{group_name}</td><td>{policy_arn}</td><td>{returnString}</td></tr>"
+                    bufgrp=bufgrp+groupStr
+                
+                resultgrp=bufgrp
+                
+                #print("res----",resultgrp)
+                resultfinalgrp=resultgrp+inlineStr
+                #print("final group -----",resultfinalgrp)
+                strfinal=strfinal+resultfinalgrp
+            final=strfinal
+            print("-------strfinal",final)
+        except Exception as e:
+            print("except throw--------",e,"  For User ",username)
+            continue
+        
+    #print(strfinal,"---------")
+    return final
+        
+def fetchAccountName(account_id):
+    if account_id == '606443521319':
+        return "PWARND"
+    elif account_id == '148160715702':
+        return "PWMRND"
+    elif account_id == '057490504518':
+        return "EGIACorpRND"
+    elif account_id == '732821778924':
+        return "EGIA Trading Platforms"
+    elif account_id == '625750620533':
+        return "PWA"
+    elif account_id == '874698610942':
+        return "PWA Call Center"
+    elif account_id == '211142723734':
+        return "PWM"
+    elif account_id == '790988048460':
+        return "Capital Services"
+    elif account_id == '335374845256':
+        return "Asset Services"
+    elif account_id == '344352937661':
+        return "Investment Management"
+    elif account_id == '371938574238':
+        return "WM Corporate"
+    elif account_id == '787935213539':
+        return "EGIA Corporate"
+    elif account_id == '081363297245':
+        return "FIA"
+    elif account_id == '687841828365':
+        return "Institutional Equities"
+    elif account_id == '943663807706':
+        return "External Asset Management"
+    elif account_id == '562272010475':
+        return "Network Account"
+    elif account_id == '686428535135':
+        return "LogArchive"
+    elif account_id == '523677342687':
+        return "SharedService"
+    elif account_id == '246841685644':
+        return "PCG"
+    elif account_id == '594963042177':
+        return "ManagementAccount"
+    elif account_id == '251531950660':
+        return "AuditAccount"
+    elif account_id == '908027402715':
+        return "Digital Data"
+    
+    
+def lambda_handler(event, context):
+    account_ids = ['908027402715','251531950660','246841685644','606443521319', '523677342687','057490504518','148160715702','732821778924','625750620533','874698610942','211142723734','790988048460','335374845256','344352937661','371938574238','787935213539','081363297245','687841828365','943663807706','686428535135','562272010475']
+    role_name = 'LambdaIAMAccessRole' 
+    all_user_data = ""
+    user_data=""
+    for account_id in account_ids:
+        credentials = assume_role(account_id, role_name)
+        account_name = fetchAccountName(account_id)
+        user_data=fetch_iam_user_data(credentials,account_id,account_name)
+        all_user_data=all_user_data+user_data
+        
+    result=f"""
+                <html>
+                    <body>
+                        <h1>Hi, Cloud Team</h1>
+                        <table>
+                        <tr><td>AccountName</td><td>UserName</td><td>GroupName</td><td>PolicyArn</td><td>ListOfPolicy</td></tr>
+                        {all_user_data}</table>
+                    </body>
+                </html>
+                """
+                
+   
+    send_email(result,all_user_data)
+    return {
+        'statusCode': 200,
+        'body': '-----Success----------'
+    }
