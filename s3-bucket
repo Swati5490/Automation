@@ -1,0 +1,137 @@
+import boto3
+ 
+ses_client = boto3.client('ses', region_name='ap-south-1')
+SENDER_EMAIL = 'cloudsupport@nuvama.com'
+def send_email(html_content,plain_text_content):
+    subject = 'S3 Bucket Encryption Status'
+    #body_text = str1
+    #print("----------------------",str)
+    #print(body_text)
+    charset = "UTF-8"
+    response = ses_client.send_email(
+        Source=SENDER_EMAIL,
+        Destination={
+            'ToAddresses': ['Swati.Singh@nuvama.com','Tushar.Patil@nuvama.com']
+        },
+        Message={
+                'Body': {
+                    'Html': {
+                        'Charset': 'UTF-8',
+                        'Data': html_content,
+                    },
+                    'Text': {
+                        'Charset': 'UTF-8',
+                        'Data': plain_text_content,
+                    },
+                },
+                'Subject': {
+                    'Charset': 'UTF-8',
+                    'Data': subject,
+                },
+            }
+    )
+    return response
+def assume_role(account_id, role_name):
+    sts_client = boto3.client('sts')
+    assumed_role = sts_client.assume_role(
+        RoleArn=f'arn:aws:iam::{account_id}:role/{role_name}',
+        RoleSessionName='LambdaSession'
+    )
+    #print(assumed_role['Credentials'])
+    return assumed_role['Credentials']
+ 
+def fetch_iam_user_data(credentials, account_id, account_name):
+    str1=""
+    str2=""
+    #print("------credentials------",credentials)
+    s3_client = boto3.client(
+        's3',
+        aws_access_key_id=credentials['AccessKeyId'],
+        aws_secret_access_key=credentials['SecretAccessKey'],
+        aws_session_token=credentials['SessionToken']
+    )
+    response = s3_client.list_buckets()
+    bucket_names = [bucket['Name'] for bucket in response['Buckets']]
+    for bucket in bucket_names :
+        try:
+            response = s3_client.get_bucket_encryption(Bucket=bucket)
+            
+            # Parse the encryption configuration
+            encryption_config = response['ServerSideEncryptionConfiguration']
+            #print(account_name,bucket,"----",encryption_config)
+            str1=f"<tr><td>{account_name}</td><td>{bucket}</td><td>{encryption_config}</td></tr>"
+            str2=str2+str1
+        except Exception as e:
+            print("Exception Throw : ",e)
+            continue
+    ##print("str2---",str2)
+    
+    return str2
+ 
+def fetchAccountName(account_id):
+    if account_id == '606443521319':
+        return "PWARND"
+    elif account_id == '148160715702':
+        return "PWMRND"
+    elif account_id == '057490504518':
+        return "EGIACorpRND"
+    elif account_id == '732821778924':
+        return "EGIA Trading Platforms"
+    elif account_id == '625750620533':
+        return "PWA"
+    elif account_id == '874698610942':
+        return "PWA Call Center"
+    elif account_id == '211142723734':
+        return "PWM"
+    elif account_id == '790988048460':
+        return "Capital Services"
+    elif account_id == '335374845256':
+        return "Asset Services"
+    elif account_id == '344352937661':
+        return "Investment Management"
+    elif account_id == '371938574238':
+        return "WM Corporate"
+    elif account_id == '787935213539':
+        return "EGIA Corporate"
+    elif account_id == '081363297245':
+        return "FIA"
+    elif account_id == '687841828365':
+        return "Institutional Equities"
+    elif account_id == '943663807706':
+        return "External Asset Management"
+    elif account_id == '686428535135':
+        return "LogArchive"
+    elif account_id == '562272010475':
+        return "Network"
+    elif account_id == '594963042177':
+        return "Management"
+    
+def lambda_handler(event, context):
+    account_ids = ['606443521319','057490504518','148160715702','732821778924','625750620533','874698610942','211142723734','790988048460','335374845256','344352937661','371938574238','787935213539','081363297245','687841828365','943663807706','686428535135','562272010475']
+    role_name = 'LambdaIAMAccessRole'
+    #print("--------------ids---------------")
+    all_user_data = ""
+    str4=""
+    str5=""
+    #print("--------type ",type(user_data))
+    for account_id in account_ids:
+        #print("-------------------------account_id-----------",account_id)
+        credentials = assume_role(account_id, role_name)
+        account_name = fetchAccountName(account_id)
+        str4=fetch_iam_user_data(credentials,account_id,account_name)
+        str5=str5+str4
+   # print("-------final account_id---",str4)
+    result=f"""
+        <html>
+            <body>
+                <h1>Hi, Cloud Team</h1>
+                <table>{str5}</table>
+            </body>
+        </html>
+    """
+    send_email(result,all_user_data)
+    print(str4)
+    return {
+        'statusCode': 200,
+        'body': '-----Success----------'
+    }
