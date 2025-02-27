@@ -1,0 +1,461 @@
+import boto3
+from datetime import datetime, timedelta
+ 
+ses_client = boto3.client('ses', region_name='ap-south-1')
+iam_client = boto3.client('iam')
+SENDER_EMAIL = 'cloudsupport@nuvama.com'
+    
+def send_email(html_content,plain_text_content):
+    subject = 'Volume/Instance Tags'
+    #body_text = str1
+    #print("----------------------",str)
+    charset = "UTF-8"
+    response = ses_client.send_email(
+        Source=SENDER_EMAIL,
+        Destination={
+            'ToAddresses': ['Swati.Singh@nuvama.com']
+        },
+        Message={
+                'Body': {
+                    'Html': {
+                        'Charset': 'UTF-8',
+                        'Data': html_content,
+                    },
+                    'Text': {
+                        'Charset': 'UTF-8',
+                        'Data': plain_text_content,
+                    },
+                },
+                'Subject': {
+                    'Charset': 'UTF-8',
+                    'Data': subject,
+                },
+            }
+    )
+    return response
+def assume_role(account_id, role_name):
+    sts_client = boto3.client('sts')
+    assumed_role = sts_client.assume_role(
+        RoleArn=f'arn:aws:iam::{account_id}:role/{role_name}',
+        RoleSessionName='LambdaSession'
+    )
+    return assumed_role['Credentials']
+ 
+def fetch_iam_user_data(credentials, account_id, account_name):
+    #print("------credentials------",credentials)
+    ec2_client = boto3.client(
+        'ec2',
+        aws_access_key_id=credentials['AccessKeyId'],
+        aws_secret_access_key=credentials['SecretAccessKey'],
+        aws_session_token=credentials['SessionToken']
+    )
+    #print("acc Name ",account_name)
+    
+    # Retrieve all instances
+    response = ec2_client.describe_instances()
+    
+    # Extract the IP addresses
+    ip_addresses = []
+    instance_id=[]
+    
+    str1=""
+    str2=""
+    str3=""
+    str4=""
+    #print(str1,"----",str2,"----",str3,"----",str4)
+    
+    try :
+        for reservation in response['Reservations']:
+            for instance in reservation['Instances']:
+                instance_id = instance.get('InstanceId', 'N/A')
+                private_ip = instance.get('PrivateIpAddress', 'N/A')
+                volumes=instance.get('BlockDeviceMappings','N/A')
+                tags = instance.get('Tags', [])
+                instancetags=[]
+                instance_name=[]
+                env_val=[]
+                daily_backup=[]
+                monthly_backup=[]
+                prod_rubrik_backup=[]
+                uat_rubrik_backup=[]
+                weekly_backup1=[]
+                weekly_backup2=[]
+                weekly_backup=""
+                yearly_backup=[]
+                for tag in tags:
+                    instancetags.append(tag['Key'])
+                    if tag['Key'] == 'Name':
+                        instance_name = tag['Value']
+                    if tag['Key'] == 'Environment':
+                        env_val = tag['Value']
+                    if tag['Key'] == 'DailyBackup':
+                        daily_backup = tag['Value']
+                    if tag['Key'] == 'MonthlyBackup':
+                        monthly_backup = tag['Value']
+                    if tag['Key'] == 'PROD_RubrikBackup':
+                        prod_rubrik_backup = tag['Value']
+                    if tag['Key'] == 'UAT_RubrikBackup':
+                        uat_rubrik_backup =tag['Value']
+                    if tag['Key'] == 'Weekly_Backup':
+                        weekly_backup1 = tag['Value']
+                    if tag['Key'] == 'YearlyBackup':
+                        yearly_backup = tag['Value']
+                    if tag['Key'] == 'WEEKLY_BACKUP':
+                        weekly_backup2 = tag['Value']
+                
+                rbk_env1 = ['PROD','DR']
+                rbk_env2 = ['DEV','UAT']
+                false_val = ['FALSE',[],'']
+                #print("---------",instance_id,"-----",daily_backup,"-------",monthly_backup)            
+                if weekly_backup2 == 'TRUE' and weekly_backup1 in false_val :
+                    weekly_backup = weekly_backup2
+                else :
+                    weekly_backup = weekly_backup1
+                    
+                str1= str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>{prod_rubrik_backup}</td><td>{uat_rubrik_backup}</td></tr>"   
+                if env_val in rbk_env1 and prod_rubrik_backup == []:
+                    if daily_backup == 'TRUE' and monthly_backup in false_val and yearly_backup in false_val and weekly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'PROD_RubrikBackup',
+                             'Value': 'RubrikBackup_D'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>Prod_Rubrik_backup_D_created</td><td>-</td></tr>"
+                    
+                    elif daily_backup == 'TRUE' and monthly_backup == 'TRUE' and yearly_backup in false_val and weekly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'PROD_RubrikBackup',
+                             'Value': 'RubrikBackup_DM'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>Prod_Rubrik_backup_DM_created</td><td>-</td></tr>"
+                    elif daily_backup == 'TRUE' and monthly_backup == 'TRUE' and yearly_backup == 'TRUE' and weekly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'PROD_RubrikBackup',
+                             'Value': 'RubrikBackup_DMY'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>Prod_Rubrik_backup_DMY_created</td><td>-</td></tr>"
+                    elif daily_backup == 'TRUE' and monthly_backup == 'TRUE' and weekly_backup == 'TRUE' and yearly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'PROD_RubrikBackup',
+                             'Value': 'RubrikBackup_DWM'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>Prod_Rubrik_backup_DWM_created</td><td>-</td></tr>"
+                    elif daily_backup == 'TRUE' and monthly_backup == '3-Months' and weekly_backup in false_val and yearly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'PROD_RubrikBackup',
+                             'Value': 'RubrikBackup_DM3'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>Prod_Rubrik_backup_DM3_created</td><td>-</td></tr>"
+                    elif daily_backup == 'TRUE' and monthly_backup == 'MonthlyOnce' and weekly_backup in false_val and yearly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'PROD_RubrikBackup',
+                             'Value': 'RubrikBackup_DMo'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>Prod_Rubrik_backup_DMo_created</td><td>-</td></tr>"
+                    elif daily_backup == 'TRUE' and monthly_backup == '8-Years' and weekly_backup in false_val and yearly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'PROD_RubrikBackup',
+                             'Value': 'RubrikBackup_DM8y'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>Prod_Rubrik_backup_DM8y_created</td><td>-</td></tr>"
+                    elif daily_backup == 'TRUE' and monthly_backup == 'MonthlyOnce' and weekly_backup in false_val and yearly_backup == 'YearlyOnce' :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'PROD_RubrikBackup',
+                             'Value': 'RubrikBackup_DMoYo'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>Prod_Rubrik_backup_DMoYo_created</td><td>-</td></tr>"
+        
+                    elif daily_backup == 'TRUE' and monthly_backup == 'TRUE' and weekly_backup in false_val and yearly_backup == 'YearlyOnce' :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'PROD_RubrikBackup',
+                             'Value': 'RubrikBackup_DMYo'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>Prod_Rubrik_backup_DMYo_created</td><td>-</td></tr>"
+                    elif daily_backup == 'TRUE' and monthly_backup in false_val and weekly_backup == 'TRUE' and yearly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'PROD_RubrikBackup',
+                             'Value': 'RubrikBackup_DW'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>Prod_Rubrik_backup_DW_created</td><td>-</td></tr>"
+                    elif daily_backup == 'TRUE' and monthly_backup in false_val and weekly_backup in false_val and yearly_backup == 'YearlyOnce' :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'PROD_RubrikBackup',
+                             'Value': 'RubrikBackup_DYo'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>Prod_Rubrik_backup_DYo_created</td><td>-</td></tr>"
+                    elif daily_backup in false_val and monthly_backup == '3-Months' and weekly_backup in false_val and yearly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'PROD_RubrikBackup',
+                             'Value': 'RubrikBackup_M3'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>Prod_Rubrik_backup_M3_created</td><td>-</td></tr>"
+                    elif daily_backup in false_val and monthly_backup == 'TRUE' and weekly_backup in false_val and yearly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'PROD_RubrikBackup',
+                             'Value': 'RubrikBackup_M'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>Prod_Rubrik_backup_M_created</td><td>-</td></tr>"
+        
+                if env_val in rbk_env2 and uat_rubrik_backup == []:
+                    if daily_backup == 'TRUE' and monthly_backup in false_val and yearly_backup in false_val and weekly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'UAT_RubrikBackup',
+                             'Value': 'RubrikBackup_D'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>-</td><td>UAT_Rubrik_backup_D_created</td></tr>"
+                    
+                    elif daily_backup == 'TRUE' and monthly_backup == 'TRUE' and yearly_backup in false_val and weekly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'UAT_RubrikBackup',
+                             'Value': 'RubrikBackup_DM'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>-</td><td>UAT_Rubrik_backup_DM_created</td></tr>"
+                    elif daily_backup == 'TRUE' and monthly_backup == 'TRUE' and yearly_backup == 'TRUE' and weekly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'UAT_RubrikBackup',
+                             'Value': 'RubrikBackup_DMY'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>-</td><td>UAT_Rubrik_backup_DMY_created</td></tr>"
+                    elif daily_backup == 'TRUE' and monthly_backup == 'TRUE' and weekly_backup == 'TRUE' and yearly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'UAT_RubrikBackup',
+                             'Value': 'RubrikBackup_DWM'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>-</td><td>UAT_Rubrik_backup_DWM_created</td></tr>"
+                    elif daily_backup == 'TRUE' and monthly_backup == '3-Months' and weekly_backup in false_val and yearly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'UAT_RubrikBackup',
+                             'Value': 'RubrikBackup_DM3'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>-</td><td>UAT_Rubrik_backup_DM3_created</td></tr>"
+                    elif daily_backup == 'TRUE' and monthly_backup == 'MonthlyOnce' and weekly_backup in false_val and yearly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'UAT_RubrikBackup',
+                             'Value': 'RubrikBackup_DMo'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>-</td><td>UAT_Rubrik_backup_DMo_created</td></tr>"
+                    elif daily_backup == 'TRUE' and monthly_backup == '8-Years' and weekly_backup in false_val and yearly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'UAT_RubrikBackup',
+                             'Value': 'RubrikBackup_DM8y'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>-</td><td>UAT_Rubrik_backup_DM8y_created</td></tr>"
+                    elif daily_backup == 'TRUE' and monthly_backup == 'MonthlyOnce' and weekly_backup in false_val and yearly_backup == 'YearlyOnce' :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'UAT_RubrikBackup',
+                             'Value': 'RubrikBackup_DMoYo'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>-</td><td>UAT_Rubrik_backup_DMoYo_created</td></tr>"
+        
+                    elif daily_backup == 'TRUE' and monthly_backup == 'TRUE' and weekly_backup in false_val and yearly_backup == 'YearlyOnce' :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'UAT_RubrikBackup',
+                             'Value': 'RubrikBackup_DMYo'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>-</td><td>UAT_Rubrik_backup_DMYo_created</td></tr>"
+                    elif daily_backup == 'TRUE' and monthly_backup in false_val and weekly_backup == 'TRUE' and yearly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'UAT_RubrikBackup',
+                             'Value': 'RubrikBackup_DW'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>-</td><td>UAT_Rubrik_backup_DW_created</td></tr>"
+                    elif daily_backup == 'TRUE' and monthly_backup in false_val and weekly_backup in false_val and yearly_backup == 'YearlyOnce' :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'UAT_RubrikBackup',
+                             'Value': 'RubrikBackup_DYo'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>-</td><td>UAT_Rubrik_backup_DYo_created</td></tr>"
+                    elif daily_backup in false_val and monthly_backup == '3-Months' and weekly_backup in false_val and yearly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'UAT_RubrikBackup',
+                             'Value': 'RubrikBackup_M3'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>-</td><td>UAT_Rubrik_backup_M3_created</td></tr>"
+                    elif daily_backup in false_val and monthly_backup == 'TRUE' and weekly_backup in false_val and yearly_backup in false_val :
+                        ec2_client.create_tags(Resources=[instance_id],
+                        Tags=[
+                           {
+                             'Key': 'UAT_RubrikBackup',
+                             'Value': 'RubrikBackup_M'
+                            }
+                        ]
+                        )
+                        str1=str1 + f"<tr><td>{account_name}</td><td>{instance_id}</td><td>{instance_name}</td><td>{env_val}</td><td>{daily_backup}</td><td>{monthly_backup}</td><td>{weekly_backup}</td><td>{yearly_backup}</td><td>-</td><td>UAT_Rubrik_backup_M_created</td></tr>"
+       
+        str3=f"<h4><tr><td>Account Name</td><td>InstanceID</td><td>InstanceName</td><td>Environment</td><td>DailyBackup</td><td>MonthlyBackup</td><td>WeeklyBackup</td><td>YearlyBackup</td><td>Prod_Rubri_Backup</td><td>UAT_Rubrik_Backup</td></tr></h4"          
+        str4= str3 + str1
+    except Exception as e:
+        print("except throw--------",e)
+    return str4
+    
+ 
+def fetchAccountName(account_id):
+    if account_id == '606443521319':
+        return "PWARND"
+    elif account_id == '148160715702':
+        return "PWMRND"
+    elif account_id == '057490504518':
+        return "EGIACorpRND"
+    elif account_id == '732821778924':
+        return "EGIA Trading Platforms"
+    elif account_id == '625750620533':
+        return "PWA"
+    elif account_id == '874698610942':
+        return "PWA Call Center"
+    elif account_id == '211142723734':
+        return "PWM"
+    elif account_id == '790988048460':
+        return "Capital Services"
+    elif account_id == '335374845256':
+        return "Asset Services"
+    elif account_id == '344352937661':
+        return "Investment Management"
+    elif account_id == '371938574238':
+        return "WM Corporate"
+    elif account_id == '787935213539':
+        return "EGIA Corporate"
+    elif account_id == '081363297245':
+        return "FIA"
+    elif account_id == '687841828365':
+        return "Institutional Equities"
+    elif account_id == '943663807706':
+        return "External Asset Management"
+    elif account_id == '562272010475':
+        return "Network Account"
+    elif account_id == '686428535135':
+        return "LogArchive"
+    elif account_id == '523677342687':
+        return "SharedService"
+    elif account_id == '246841685644':
+        return "PCG"
+    elif account_id == '594963042177':
+        return "ManagementAccount"
+    elif account_id == '251531950660':
+        return "AuditAccount"
+    elif account_id == '908027402715':
+        return "Digital Data"
+    
+    
+def lambda_handler(event, context):
+    account_ids = ['251531950660','246841685644', '732821778924','625750620533','211142723734','790988048460','335374845256','344352937661','371938574238','787935213539','081363297245','687841828365','943663807706','874698610942']
+    role_name = 'LambdaIAMAccessRole'
+    all_user_data = ""
+    user_data=""
+    for account_id in account_ids:
+        credentials = assume_role(account_id, role_name)
+        account_name = fetchAccountName(account_id)
+        print("-------------------------account_name-----------",account_name)
+        user_data = fetch_iam_user_data(credentials,account_id,account_name)
+        all_user_data=all_user_data+user_data
+    result=f"""
+        <html>
+            <body>
+                <h1>Hi, Cloud Team</h1>
+                <table border="1" style="border-collapse: collapse;">{all_user_data}</table>
+            </body>
+        </html>
+    """
+    send_email(result,all_user_data)
+    return {
+        'statusCode': 200,
+        'body': '-----Success----------'
+    }
