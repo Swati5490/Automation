@@ -1,0 +1,283 @@
+import boto3
+from datetime import datetime, timedelta
+ 
+ses_client = boto3.client('ses', region_name='ap-south-1')
+iam_client = boto3.client('iam')
+SENDER_EMAIL = 'cloudsupport@nuvama.com'
+def send_email1(recipient_email, access_key_id,iamusername ,username,account_name,notifyEmailParts,last_used_date,days1,create_date,age):
+    subject = 'Intimation Mail || Unused IAM User more than 30 Days'
+    body_text = (
+        f"<p>Hi {username},</p>"
+        f"<p>The following IAM user has been identified as unused for more than 30 days.</p> "
+        f"<p>If no response or activity is observed within 15 days, Advisory action can be taken, as this is a critical part of our security policy.</p>"
+        f"<table border={"1"} style={"border-collapse: collapse;"}>"
+        f"<tr><td><h4>Account Name </h4></td><td> {account_name}</td></tr>"
+        f"<tr><td><h4>IAM User </h4></td><td> {iamusername}</td></tr>"
+        f"<tr><td><h4>Access Key ID </h4></td><td> {access_key_id}</td></tr>"
+        f"<tr><td><h4>Access Key Create Date </h4></td><td> {create_date}</td></tr>"
+        f"<tr><td><h4>Access Key Last Used Date </h4></td><td> {last_used_date}</td></tr>"
+        f"<tr><td><h4>Age Of Access Key </h4></td><td> {age}</td></tr>"
+        f"<tr><td><h4>Access Key Unused Days </h4></td><td> {days1}</td></tr>"
+        f"</table>"
+        f"<p>Thank You, For your support</p>"
+        
+    )
+    sendemail11(subject,body_text,recipient_email,notifyEmailParts)
+    
+def sendemail11(subject,body_text,recipient_email,notifyEmailParts) :  
+    #print("email notify-----",notifyEmailParts)
+    response=""
+    if notifyEmailParts == ['Null']:
+        #print("email notify--222---",notifyEmailParts)
+        cc_email=['Swati.Singh@nuvama.com','Priyanka.Raut@nuvama.com']
+    else:
+        #print("email notify--333333---",notifyEmailParts)
+        cc_email= notifyEmailParts + ['Swati.Singh@nuvama.com','Priyanka.Raut@nuvama.com']
+    charset = "UTF-8"
+    response = ses_client.send_email(
+        Source=SENDER_EMAIL,
+        Destination={
+            'ToAddresses': [recipient_email],
+            'CcAddresses': cc_email
+        },
+        Message={
+            'Body': {
+                'Html': {
+                    'Charset': charset,
+                    'Data': body_text,
+                },
+                'Text': {
+                    'Charset': charset,
+                    'Data': body_text,
+                },
+            },
+            'Subject': {
+                'Charset': charset,
+                'Data': subject,
+            },
+        }
+    )
+    #print("Mail Sent to ",recipient_email, "Message : ",body_text)
+    return response
+    
+def send_email(html_content,plain_text_content):
+    subject = 'Weekly Report for IAM Users Access Keys for All AWS Accounts'
+    #body_text = str1
+    #print("----------------------",str)
+    charset = "UTF-8"
+    response = ses_client.send_email(
+        Source=SENDER_EMAIL,
+        Destination={
+            'ToAddresses': ['Swati.Singh@nuvama.com','Priyanka.Raut@nuvama.com']
+        },
+        Message={
+                'Body': {
+                    'Html': {
+                        'Charset': 'UTF-8',
+                        'Data': html_content,
+                    },
+                    'Text': {
+                        'Charset': 'UTF-8',
+                        'Data': plain_text_content,
+                    },
+                },
+                'Subject': {
+                    'Charset': 'UTF-8',
+                    'Data': subject,
+                },
+            }
+    )
+    return response
+def assume_role(account_id, role_name):
+    sts_client = boto3.client('sts')
+    assumed_role = sts_client.assume_role(
+        RoleArn=f'arn:aws:iam::{account_id}:role/{role_name}',
+        RoleSessionName='LambdaSession'
+    )
+    #print(assumed_role['Credentials'])
+    return assumed_role['Credentials']
+ 
+def fetch_iam_user_data(credentials, account_id, account_name):
+    #print("------credentials------",credentials)
+    iam_client = boto3.client(
+        'iam',
+        aws_access_key_id=credentials['AccessKeyId'],
+        aws_secret_access_key=credentials['SecretAccessKey'],
+        aws_session_token=credentials['SessionToken']
+    )
+    #print("-------account id ------",account_id)
+    users = iam_client.list_users()
+    #print("-----------users",users)
+    user_data = []
+    str1 = ""
+    str2 = ""
+    #str3 = ""
+    str4 = ""
+    str11 = ""
+    username = ""
+    try :
+        for user in users['Users']:
+            username = user['UserName']
+            #print("---------------------------username",username)
+            access_keys = iam_client.list_access_keys(UserName=username)['AccessKeyMetadata']
+            tags = iam_client.list_user_tags(UserName=username)
+            #print("00000000000000------------access_keys--------",access_keys)
+            email_addresses = []
+            #get_inactive_keys = []
+            cto=[]
+            notifyEmail=[]
+            user = []
+            keyrotation=[]
+            last_used_date = []
+            days1=[]
+            current=[]
+            
+            for tag in tags['Tags']:
+                if tag['Key'] == 'User':
+                    user.append((username, tag['Value']))
+                    #print("------1-----------",user)
+                elif tag['Key'] == 'Email':
+                    email_addresses.append((username, tag['Value']))
+                    #print("-------11----------",email_addresses)
+                elif tag['Key'] == 'KeyAction':
+                    keyrotation.append((username, tag['Value']))
+                    #print("-------",keyrotation)
+                elif tag['Key'] == 'CTO':
+                    cto.append((username, tag['Value']))
+                    #print("-------------",cto)
+                elif tag['Key'] == 'NotificationEmail':
+                    notifyEmail.append((username, tag['Value']))
+                    #print("-------111----------",notifyEmail)
+            for username, email in email_addresses:
+                email_addresses = email
+            for username, userTag in user:
+                user = userTag
+            for username, key_rotation in keyrotation:
+                keyrotation = key_rotation
+            for username, cto_email in cto:
+                cto = cto_email
+            for username, notify_email in notifyEmail:
+                notifyEmail = notify_email
+                
+            if notifyEmail != []:
+                notifyEmailParts = notifyEmail.split(" ")
+                #print("-------",notifyEmailParts)
+            key_id = []
+            key_status  = []
+            age = []
+            last_used_date=[]
+            if access_keys == []:
+                str1 = f"<tr><td>{account_name}</td><td>{username}</td><td>{user}</td><td>{email_addresses}</td><td>{keyrotation}</td><td>{cto}</td><td>{notifyEmail}</td><td>{key_id}</td><td>{age}</td><td>{key_status}</td><td>{last_used_date}</td><td>{days1}</td></tr>"
+            else:
+                str3 = ""
+                for key in access_keys:
+                    key_id = key['AccessKeyId']
+                    create_date = key['CreateDate']
+                    
+                    key_status  = key['Status']
+                    age = (datetime.now(create_date.tzinfo) - create_date).days
+                    extra= 1
+                    age = age + extra
+                    last_used_response = iam_client.get_access_key_last_used(AccessKeyId=key_id)
+                    last_used_date = last_used_response['AccessKeyLastUsed'].get('LastUsedDate', 'Never Used')
+                    if last_used_date == 'Never Used' :
+                        current = datetime.now().date()
+                        create_date = create_date.date()
+                        days1 = create_date - current
+                        days1 = days1.days
+                        days1 = -(days1)
+                        if days1 >= 30 and user != []:
+                            print("------------------",user,create_date,age,days1)
+                            #send_email1(email_addresses,key_id,username,user,account_name,notifyEmailParts,last_used_date,days1,create_date,age)
+                    else :
+                        last_used_date = last_used_date.date()
+                        current = datetime.now().date()
+                        days1 = current - last_used_date
+                        create_date = create_date.date()
+                        days1 = days1.days
+                        if days1 >= 30 and user != []:
+                            #print("------------------",user,create_date,age,days1)
+                            send_email1(email_addresses,key_id,username,user,account_name,notifyEmailParts,last_used_date,days1,create_date,age)
+                    str2 =  f"<tr><td>{account_name}</td><td>{username}</td><td>{user}</td><td>{email_addresses}</td><td>{keyrotation}</td><td>{cto}</td><td>{notifyEmail}</td><td>{key_id}</td><td>{age}</td><td>{key_status}</td><td>{last_used_date}</td><td>{days1}</td></tr>"
+                    str3= str3 + str2
+                str1 = str3
+            str11=str11+str1
+        str3= f"<tr><th>AccountName</th><th>IAMUser</th><th>Owner</th><th>Email</th><th>KeyRotationAction</th><th>CTO</th><th>NotificationEmail</th><th>AccessKeyId</th><th>Age</th><th>Status</th><th>LastUsedDate</th><th>UnusedDays</th></tr>"
+        str4 = str3 + str11
+    except Exception as e:
+        print("except throw--------",e,"  For User ",username)
+    return str4
+ 
+def fetchAccountName(account_id):
+    if account_id == '606443521319':
+        return "PWARND"
+    elif account_id == '148160715702':
+        return "PWMRND"
+    elif account_id == '057490504518':
+        return "EGIACorpRND"
+    elif account_id == '732821778924':
+        return "EGIA Trading Platforms"
+    elif account_id == '625750620533':
+        return "PWA"
+    elif account_id == '874698610942':
+        return "PWA Call Center"
+    elif account_id == '211142723734':
+        return "PWM"
+    elif account_id == '790988048460':
+        return "Capital Services"
+    elif account_id == '335374845256':
+        return "Asset Services"
+    elif account_id == '344352937661':
+        return "Investment Management"
+    elif account_id == '371938574238':
+        return "WM Corporate"
+    elif account_id == '787935213539':
+        return "EGIA Corporate"
+    elif account_id == '081363297245':
+        return "FIA"
+    elif account_id == '687841828365':
+        return "Institutional Equities"
+    elif account_id == '943663807706':
+        return "External Asset Management"
+    elif account_id == '562272010475':
+        return "Network Account"
+    elif account_id == '686428535135':
+        return "LogArchive"
+    elif account_id == '523677342687':
+        return "SharedService"
+    elif account_id == '246841685644':
+        return "PCG"
+    elif account_id == '594963042177':
+        return "ManagementAccount"
+    elif account_id == '251531950660':
+        return "AuditAccount"
+    elif account_id == '908027402715':
+        return "Digital Data"
+    
+    
+def lambda_handler(event, context):
+    account_ids = ['908027402715','251531950660','246841685644','606443521319', '523677342687','057490504518','148160715702','732821778924','625750620533','874698610942','211142723734','790988048460','335374845256','344352937661','371938574238','787935213539','081363297245','687841828365','943663807706','686428535135','562272010475']
+    role_name = 'LambdaIAMAccessRole'
+    #print("--------------ids---------------")
+    all_user_data = ""
+    user_data=""
+    for account_id in account_ids:
+        credentials = assume_role(account_id, role_name)
+        account_name = fetchAccountName(account_id)
+        print("-------------------------account_name-----------",account_name)
+        user_data = fetch_iam_user_data(credentials,account_id,account_name)
+        all_user_data=all_user_data+user_data
+    #print("=================",all_user_data)
+    result=f"""
+        <html>
+            <body>
+                <h1>Hi, Cloud Team</h1>
+                <table border="1" style="border-collapse: collapse;">{all_user_data}</table>
+            </body>
+        </html>
+    """
+    send_email(result,all_user_data)
+    return {
+        'statusCode': 200,
+        'body': '-----Success----------'
+    }
