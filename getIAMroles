@@ -1,0 +1,200 @@
+import json
+import boto3
+import time
+from botocore.exceptions import ClientError
+
+ 
+ses_client = boto3.client('ses', region_name='ap-south-1')
+iam_client = boto3.client('iam')
+SENDER_EMAIL = 'cloudsupport@nuvama.com'
+def send_email(html_content,plain_text_content, account_name):
+    subject = 'Policy Associated with Role || '+account_name
+    #body_text = str1
+    #print("----------------------",str)
+    #print(body_text)
+    charset = "UTF-8"
+    response = ses_client.send_email(
+        Source=SENDER_EMAIL,
+        Destination={
+            'ToAddresses': ['Swati.Singh@nuvama.com']
+        },
+        Message={
+                'Body': {
+                    'Html': {
+                        'Charset': 'UTF-8',
+                        'Data': html_content,
+                    },
+                    'Text': {
+                        'Charset': 'UTF-8',
+                        'Data': plain_text_content,
+                    },
+                },
+                'Subject': {
+                    'Charset': 'UTF-8',
+                    'Data': subject,
+                },
+            }
+    )
+    return response
+
+def assume_role(account_id, role_name):
+    sts_client = boto3.client('sts')
+    assumed_role = sts_client.assume_role(
+        RoleArn=f'arn:aws:iam::{account_id}:role/{role_name}',
+        RoleSessionName='LambdaSession'
+    )
+    #print(assumed_role['Credentials'])
+    return assumed_role['Credentials']
+    
+def getSubString(actions):
+    str01=""
+    subStr='waf'
+    for sublist in actions:
+        #print("sublist-------",sublist)
+        if sublist == '*':
+            return '*'
+        else :
+            if isinstance(sublist, list):
+                for item in sublist:
+                    #print("----if------",item)
+                    if subStr in item :
+                        str01=str01+item
+                        #print("------str01----1",str01)
+            else:
+                item=sublist
+                #print("------else-------",item)
+                if subStr in item :
+                    str01=str01+item
+                    #print("------str01----2",str01)
+    #print("--------final string-----",str01)
+    if str01 != "":
+        print("---final  ",str01)
+    return str01
+    
+def fetch_iam_user_data(credentials,account_id,account_name):
+    iam_client = boto3.client(
+        'iam',
+        aws_access_key_id=credentials['AccessKeyId'],
+        aws_secret_access_key=credentials['SecretAccessKey'],
+        aws_session_token=credentials['SessionToken']
+    )
+    #print("-------account id ------",account_id)
+    roles = iam_client.list_roles()
+    print("-----------role",roles)
+    user_data = []
+    result1=""
+    result2=""
+    str4=""
+    str3=""
+    inline_policy_name =""
+    statement=[]
+    actions=[]
+    rolename = ""
+    resultfinal=""
+    groupStr=""
+    bufstr1=""
+    for role in roles['Roles']:
+        try :
+            rolename = role['RoleName']
+            rolearn= role['Arn']
+            #print("----------rolename---",rolename)
+            attached_policies = iam_client.list_attached_role_policies(RoleName=rolename)
+            for policy in attached_policies['AttachedPolicies']:
+                actions=[]
+                policy_arn = policy['PolicyArn']
+                #print('policy ARN-111--',policy_arn)
+                policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
+                #print("ver----",policy_version)
+                policy_document = iam_client.get_policy_version(
+                PolicyArn=policy_arn,
+                VersionId=policy_version
+                )['PolicyVersion']['Document']
+                #print("---------policy_document",policy_document)
+                for statement in policy_document.get("Statement", []):
+                    action = statement.get("Action")
+                    actions.append(action)
+                returnString = getSubString(actions)
+                if returnString != "" :
+                    groupStr = f"<tr><td>{rolename}</td><td>{policy_arn}</td><td>{returnString}</td>"
+                    #print("groupStr------",groupStr)
+                    bufstr1=bufstr1+groupStr
+            result1=bufstr1
+            #print("result------",result1)
+            result=f"""
+                <html>
+                    <body>
+                        <h1>Hi, Cloud Team</h1>
+                        <table><tr><td>RoleName</td><td>RolicyARN</td><td>ListOfPolicy</td></tr>
+                        {result1}
+                        </table>
+                    </body>
+                </html>
+                """
+            
+        except Exception as e:
+            print("except throw--------",e,"  For User ",rolename)
+            continue
+    
+    send_email(result,result1,account_name)
+    return 200
+     
+def fetchAccountName(account_id):
+    if account_id == '606443521319':
+        return "PWARND"
+    elif account_id == '148160715702':
+        return "PWMRND"
+    elif account_id == '057490504518':
+        return "EGIACorpRND"
+    elif account_id == '732821778924':
+        return "EGIA Trading Platforms"
+    elif account_id == '625750620533':
+        return "PWA"
+    elif account_id == '874698610942':
+        return "PWA Call Center"
+    elif account_id == '211142723734':
+        return "PWM"
+    elif account_id == '790988048460':
+        return "Capital Services"
+    elif account_id == '335374845256':
+        return "Asset Services"
+    elif account_id == '344352937661':
+        return "Investment Management"
+    elif account_id == '371938574238':
+        return "WM Corporate"
+    elif account_id == '787935213539':
+        return "EGIA Corporate"
+    elif account_id == '081363297245':
+        return "FIA"
+    elif account_id == '687841828365':
+        return "Institutional Equities"
+    elif account_id == '943663807706':
+        return "External Asset Management"
+    elif account_id == '562272010475':
+        return "Network Account"
+    elif account_id == '686428535135':
+        return "LogArchive"
+    elif account_id == '523677342687':
+        return "SharedService"
+    elif account_id == '246841685644':
+        return "PCG"
+    elif account_id == '594963042177':
+        return "ManagementAccount"
+    elif account_id == '251531950660':
+        return "AuditAccount"
+    elif account_id == '908027402715':
+        return "Digital Data"
+    
+    
+def lambda_handler(event, context):
+    account_ids = ['908027402715','251531950660','246841685644','523677342687','057490504518','148160715702','732821778924','625750620533','874698610942','211142723734','790988048460','335374845256','344352937661','371938574238','787935213539','081363297245','687841828365','943663807706','686428535135','562272010475']
+    role_name = 'LambdaIAMAccessRole'
+    all_user_data = ""
+    user_data=""
+    for account_id in account_ids:
+        credentials = assume_role(account_id, role_name)
+        account_name = fetchAccountName(account_id)
+        fetch_iam_user_data(credentials,account_id,account_name)
+    return {
+        'statusCode': 200,
+        'body': '-----Success----------'
+    }
