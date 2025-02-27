@@ -1,0 +1,70 @@
+import boto3
+import json
+
+iam_client = boto3.client('iam')
+access_analyzer = boto3.client('accessanalyzer')
+
+def lambda_handler(event, context):
+    rolename=""
+    roles = iam_client.list_roles()
+    for role in roles['Roles']:
+        try :
+            rolename = role['RoleName']
+            rolearn= role['Arn']
+            
+            unused_policies = []
+            print("rolename", rolename)
+            # Step 1: Get attached policies (managed)
+            attached_policies = iam_client.list_attached_role_policies(RoleName=rolename)
+            
+            # Step 2: Get inline policies
+            inline_policies = iam_client.list_role_policies(RoleName=rolename)
+            
+            # Step 3: Generate service last accessed details for the role
+            job_id = iam_client.generate_service_last_accessed_details(Arn=f"arn:aws:iam::523677342687:role/{rolename}")
+            job_status = iam_client.get_service_last_accessed_details(JobId=job_id['JobId'])
+            
+            # Wait for the job to complete (you might want to handle this asynchronously)
+            while job_status['JobStatus'] != 'COMPLETED':
+                job_status = iam_client.get_service_last_accessed_details(JobId=job_id['JobId'])
+            
+            last_accessed_details = job_status['ServicesLastAccessed']
+            #print(job_status,"-----------------",last_accessed_details)
+            
+            
+            for policy in attached_policies['AttachedPolicies']:
+                policy_arn = policy['PolicyArn']
+                used_services = []
+                
+                # Only include services that have a 'LastAccessed' field
+                for service in last_accessed_details:
+                    print("service ", service)
+                    if 'LastAccessed' in service:
+                        used_services.append(service['ServiceName'])
+                        
+                print("used_services----",used_services)
+            '''    
+            # Step 4: Compare policies with last accessed services
+            for policy in attached_policies['AttachedPolicies']:
+                policy_arn = policy['PolicyArn']
+                print("policyarn---",policy_arn)
+                
+                used_services = [service['ServiceName'] for service in last_accessed_details if service['LastAccessed']]
+                print("used service ---- ",used_services)
+                
+                # Get policy document to analyze allowed services (optional, needs to parse JSON)
+                policy_document = iam_client.get_policy(PolicyArn=policy_arn)
+                policy_version = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_document['Policy']['DefaultVersionId'])
+                
+                # Simple check: if no services were accessed, mark as unused
+                if not any(service['ServiceName'] in used_services for service in last_accessed_details):
+                    unused_policies.append(policy['PolicyName'])'''
+        except Exception as e:
+            print("except throw--------",e,"  For User ",rolename)
+            continue
+    return {
+        'statusCode': 200,
+        'body': json.dumps({
+            'UnusedPolicies': unused_policies
+        })
+    }
